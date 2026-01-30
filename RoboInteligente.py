@@ -1,132 +1,170 @@
-import streamlit as st
+import os
+import time
+import threading
+import math
+import random
 from groq import Groq
-import base64
+from gtts import gTTS
+import pygame
 
-# --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(
-    page_title="TutorIntEqQuadratica",
-    layout="centered",
-    page_icon="🧮"
-)
+from kivy.app import App
+from kivy.lang import Builder
+from kivy.uix.screenmanager import ScreenManager, Screen
+from kivy.properties import NumericProperty, StringProperty, ObjectProperty
+from kivy.clock import Clock
+from kivy.graphics import Color, Line, Ellipse, Rectangle
+import speech_recognition as sr
 
-# --- DESIGN CUSTOMIZADO (CSS) PARA APK ---
-st.markdown("""
-    <style>
-    /* Estilo para botões mobile-friendly */
-    div.stButton > button {
-        width: 100%;
-        background-color: #2563eb;
-        color: white;
-        border-radius: 12px;
-        font-weight: bold;
-        padding: 0.75rem;
-        border: none;
-    }
-    /* Estilo para as mensagens do chat */
-    .stChatMessage {
-        border-radius: 15px;
-        padding: 10px;
-        margin-bottom: 5px;
-    }
-    /* Esconder o menu padrão do Streamlit para parecer App nativo */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    </style>
-    """, unsafe_allow_html=True)
+# Configuração da API Groq - Substitua pela sua chave ou configure no ambiente
+client = Groq(api_key="SUA_CHAVE_GROQ_AQUI")
 
-# --- CONEXÃO SEGURA ---
-def get_groq_client():
+# Inicialização do Mixer para áudio
+pygame.mixer.init()
+
+def falar(texto):
     try:
-        # Puxa a chave gsk_... configurada no secrets.toml ou no Cloud
-        return Groq(api_key=st.secrets["GROQ_API_KEY"])
-    except Exception:
-        st.error("ERRO: Configuração de chave ausente.")
-        st.stop()
+        tts = gTTS(text=texto, lang='pt')
+        filename = "voce.mp3"
+        tts.save(filename)
+        pygame.mixer.music.load(filename)
+        pygame.mixer.music.play()
+    except Exception as e:
+        print(f"Erro na voz: {e}")
 
-client = get_groq_client()
+# Design da Interface
+KV = '''
+ScreenManager:
+    IntroScreen:
+    TrigoScreen:
+    GameScreen:
 
-# --- BLINDAGEM DE FOCO (SYSTEM PROMPT) ---
-SYSTEM_PROMPT = """
-VOCÊ É O "TutorIntEqQuadratica".
-SEU ÚNICO OBJETIVO É ENSINAR EQUAÇÕES DO 2º GRAU.
+<IntroScreen>:
+    name: 'intro'
+    BoxLayout:
+        orientation: 'vertical'
+        padding: 20
+        spacing: 10
+        canvas.before:
+            Color:
+                rgba: 0.1, 0.1, 0.1, 1
+            Rectangle:
+                pos: self.pos
+                size: self.size
+        
+        Label:
+            text: "Tutor Trigonométrico"
+            font_size: '32sp'
+            size_hint_y: 0.1
 
-INSTRUÇÕES DE SEGURANÇA E FOCO:
-1. FOCO TOTAL: Se o aluno perguntar sobre qualquer tema que NÃO seja equações quadráticas ou matemática básica relacionada, responda educadamente: "Como TutorIntEqQuadratica, meu foco é ajudar você a dominar equações do 2º grau. Vamos voltar ao tema?"
-2. MÉTODO SCAFFOLDING: Nunca dê o valor de 'x' direto. Pergunte pelos coeficientes (a, b, c), peça para calcular o Delta ($\Delta$), etc.
-3. VISÃO: Se receber imagem, identifique os termos da equação quadrática nela.
-4. FORMATAÇÃO: Use LaTeX para clareza matemática.
-"""
+        # Placeholder para o Robô (70% do ecrã)
+        Image:
+            source: 'robo_intro.png' # Certifique-se de ter esta imagem
+            size_hint_y: 0.6
+            allow_stretch: True
 
-# --- INICIALIZAÇÃO DO ESTADO ---
-if "mensagens" not in st.session_state:
-    st.session_state.mensagens = []
-if "camera_ativa" not in st.session_state:
-    st.session_state.camera_ativa = False
+        TextInput:
+            id: nome_input
+            hint_text: "Escreve o teu nome aqui"
+            multiline: False
+            size_hint: (0.5, None)
+            height: '40dp'
+            pos_hint: {'center_x': 0.5}
 
-# --- UI DO APLICATIVO ---
-st.title("🧮 TutorIntEqQuadratica")
-st.caption("Especialista em Equações de 2º Grau")
+        Button:
+            text: "Entrar"
+            size_hint: (0.3, None)
+            height: '50dp'
+            pos_hint: {'center_x': 0.5}
+            on_release: root.saudacao()
 
-# Exibição do Histórico
-for msg in st.session_state.mensagens:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+<TrigoScreen>:
+    name: 'trigo'
+    canvas.before:
+        # Fundo do Robô personalizado
+        Color:
+            rgba: 0.8, 0.8, 0.8, 1 # Cinza claro
+        Rectangle:
+            pos: self.pos
+            size: self.size
+        # Aqui seriam desenhados os elementos do robô (olhos vermelhos, etc)
+        # Simplificado com cores de fundo:
+        Color:
+            rgba: 1, 1, 1, 1 # Boca branca
+        Rectangle:
+            pos: self.width*0.4, self.height*0.1
+            size: self.width*0.2, self.height*0.05
 
-# --- ÁREA DE INPUT ---
-st.divider()
-col1, col2 = st.columns([1, 1])
-with col1:
-    if st.button("📷 Abrir Câmera"):
-        st.session_state.camera_ativa = not st.session_state.camera_ativa
+    FloatLayout:
+        # Círculo Trigonométrico
+        TrigoWidget:
+            id: trigo_widget
+            size_hint: (0.8, 0.8)
+            pos_hint: {'center_x': 0.5, 'center_y': 0.5}
 
-foto_aluno = None
-if st.session_state.camera_ativa:
-    foto_aluno = st.camera_input("Capture o exercício")
+        # Painel de Botões
+        BoxLayout:
+            size_hint: (1, 0.1)
+            pos_hint: {'y': 0}
+            Button:
+                text: "Iniciar +"
+                on_release: trigo_widget.start_movement(1)
+            Button:
+                text: "Parar/Avançar"
+                on_release: trigo_widget.toggle_movement()
+            Button:
+                text: "Reiniciar"
+                on_release: trigo_widget.reset()
+            Button:
+                text: "Vamos Jogar"
+                on_release: app.root.current = 'game'
 
-prompt_texto = st.chat_input("Ex: Como calculo o delta desta equação?")
+<GameScreen>:
+    name: 'game'
+    BoxLayout:
+        orientation: 'horizontal'
+        
+        # Barra de rolagem grossa à esquerda
+        ScrollView:
+            size_hint_x: 0.2
+            bar_width: 20
+            Label:
+                text: "Progresso e Dicas\\n" * 50
+                size_hint_y: None
+                height: self.texture_size[1]
+        
+        BoxLayout:
+            orientation: 'vertical'
+            padding: 20
+            Label:
+                text: "Ecrã de Gamificação - IA Groq"
+                font_size: '24sp'
+                size_hint_y: 0.1
+            
+            Label:
+                id: score_label
+                text: "Pontuação: 0"
+                size_hint_y: 0.1
+            
+            Label:
+                id: question_text
+                text: "Carregando questão..."
+                text_size: self.width, None
+                size_hint_y: 0.4
+            
+            GridLayout:
+                id: options_grid
+                cols: 2
+                spacing: 10
+                size_hint_y: 0.3
 
-# --- PROCESSAMENTO IA ---
-if prompt_texto or (foto_aluno and st.session_state.camera_ativa):
-    payload = []
-    
-    if prompt_texto:
-        st.session_state.mensagens.append({"role": "user", "content": prompt_texto})
-        payload.append({"type": "text", "text": prompt_texto})
+            BoxLayout:
+                size_hint_y: 0.1
+                Button:
+                    text: "Voltar ao Círculo"
+                    on_release: app.root.current = 'trigo'
+                Button:
+                    text: "Reiniciar Jogo"
+                    on_release: root.start_game()
 
-    if foto_aluno:
-        img_base64 = base64.b64encode(foto_aluno.getvalue()).decode('utf-8')
-        payload.append({
-            "type": "image_url",
-            "image_url": {"url": f"data:image/jpeg;base64,{img_base64}"}
-        })
-        if not prompt_texto:
-            st.session_state.mensagens.append({"role": "user", "content": "📸 [Imagem enviada para análise]"})
-
-    # Chamada à Groq com Temperatura Baixa (Foco Máximo)
-    with st.chat_message("assistant"):
-        try:
-            with st.spinner("Analisando foco..."):
-                response = client.chat.completions.create(
-                    model="llama-3.2-11b-vision-preview",
-                    messages=[
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": payload}
-                    ],
-                    temperature=0.1, # Temperatura mínima para evitar que a IA "viaje"
-                    max_tokens=600
-                )
-                
-                texto_resposta = response.choices[0].message.content
-                st.markdown(texto_resposta)
-                st.session_state.mensagens.append({"role": "assistant", "content": texto_resposta})
-                st.session_state.camera_ativa = False # Fecha câmera após processar
-                
-        except Exception as e:
-            st.error(f"Erro de conexão: {str(e)}")
-
-# Sidebar para funções administrativas
-with st.sidebar:
-    st.title("Configurações")
-    if st.button("🗑️ Reiniciar Tutor"):
-        st.session_state.mensagens = []
-        st.rerun()
+<TrigoWidget@Widget>:
+    angle: 0
