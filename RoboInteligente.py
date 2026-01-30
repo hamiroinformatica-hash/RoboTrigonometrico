@@ -1,170 +1,138 @@
-import os
-import time
-import threading
-import math
-import random
+import streamlit as st
+import numpy as np
+import plotly.graph_objects as go
 from groq import Groq
-from gtts import gTTS
-import pygame
+import time
 
-from kivy.app import App
-from kivy.lang import Builder
-from kivy.uix.screenmanager import ScreenManager, Screen
-from kivy.properties import NumericProperty, StringProperty, ObjectProperty
-from kivy.clock import Clock
-from kivy.graphics import Color, Line, Ellipse, Rectangle
-import speech_recognition as sr
+# --- CONFIGURAÇÃO INICIAL ---
+st.set_page_config(page_title="Tutor Trigonométrico", layout="wide")
 
-# Configuração da API Groq - Substitua pela sua chave ou configure no ambiente
-client = Groq(api_key="SUA_CHAVE_GROQ_AQUI")
+# Inicialização da API Groq (Substitua pela sua chave)
+try:
+    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+except:
+    client = None
 
-# Inicialização do Mixer para áudio
-pygame.mixer.init()
+# Inicializar Estados de Sessão (State Management)
+if 'pagina' not in st.session_state:
+    st.session_state.pagina = 'intro'
+if 'nome' not in st.session_state:
+    st.session_state.nome = ""
+if 'angulo' not in st.session_state:
+    st.session_state.angulo = 0.0
+if 'pontos' not in st.session_state:
+    st.session_state.pontos = 0
 
-def falar(texto):
-    try:
-        tts = gTTS(text=texto, lang='pt')
-        filename = "voce.mp3"
-        tts.save(filename)
-        pygame.mixer.music.load(filename)
-        pygame.mixer.music.play()
-    except Exception as e:
-        print(f"Erro na voz: {e}")
+# --- FUNÇÕES DE SUPORTE ---
+def mudar_pagina(alvo):
+    st.session_state.pagina = alvo
+    st.rerun()
 
-# Design da Interface
-KV = '''
-ScreenManager:
-    IntroScreen:
-    TrigoScreen:
-    GameScreen:
+def gerar_circulo(angulo_atual):
+    # Criar o círculo
+    theta = np.linspace(0, 2*np.pi, 100)
+    x_circ = np.cos(theta)
+    y_circ = np.sin(theta)
 
-<IntroScreen>:
-    name: 'intro'
-    BoxLayout:
-        orientation: 'vertical'
-        padding: 20
-        spacing: 10
-        canvas.before:
-            Color:
-                rgba: 0.1, 0.1, 0.1, 1
-            Rectangle:
-                pos: self.pos
-                size: self.size
-        
-        Label:
-            text: "Tutor Trigonométrico"
-            font_size: '32sp'
-            size_hint_y: 0.1
+    fig = go.Figure()
 
-        # Placeholder para o Robô (70% do ecrã)
-        Image:
-            source: 'robo_intro.png' # Certifique-se de ter esta imagem
-            size_hint_y: 0.6
-            allow_stretch: True
+    # Eixos (Cosseno Vermelho, Seno Azul)
+    fig.add_shape(type="line", x0=-1.2, y0=0, x1=1.2, y1=0, line=dict(color="Red", width=2))
+    fig.add_shape(type="line", x0=0, y0=-1.2, x1=0, y1=1.2, line=dict(color="DarkBlue", width=2))
 
-        TextInput:
-            id: nome_input
-            hint_text: "Escreve o teu nome aqui"
-            multiline: False
-            size_hint: (0.5, None)
-            height: '40dp'
-            pos_hint: {'center_x': 0.5}
+    # Círculo
+    fig.add_trace(go.Scatter(x=x_circ, y=y_circ, mode='lines', line=dict(color='black'), name='Círculo'))
 
-        Button:
-            text: "Entrar"
-            size_hint: (0.3, None)
-            height: '50dp'
-            pos_hint: {'center_x': 0.5}
-            on_release: root.saudacao()
+    # Segmento OP (Verde)
+    rad = np.radians(angulo_atual)
+    px, py = np.cos(rad), np.sin(rad)
+    fig.add_trace(go.Scatter(x=[0, px], y=[0, py], mode='lines+markers', line=dict(color='green', width=4), name='Raio (OP)'))
 
-<TrigoScreen>:
-    name: 'trigo'
-    canvas.before:
-        # Fundo do Robô personalizado
-        Color:
-            rgba: 0.8, 0.8, 0.8, 1 # Cinza claro
-        Rectangle:
-            pos: self.pos
-            size: self.size
-        # Aqui seriam desenhados os elementos do robô (olhos vermelhos, etc)
-        # Simplificado com cores de fundo:
-        Color:
-            rgba: 1, 1, 1, 1 # Boca branca
-        Rectangle:
-            pos: self.width*0.4, self.height*0.1
-            size: self.width*0.2, self.height*0.05
+    # Projeções (Segmentos 1 e 2)
+    fig.add_trace(go.Scatter(x=[px, px], y=[0, py], mode='lines', line=dict(color='black', dash='dash'), name='Cos'))
+    fig.add_trace(go.Scatter(x=[0, px], y=[py, py], mode='lines', line=dict(color='darkgreen', dash='dash'), name='Sen'))
 
-    FloatLayout:
-        # Círculo Trigonométrico
-        TrigoWidget:
-            id: trigo_widget
-            size_hint: (0.8, 0.8)
-            pos_hint: {'center_x': 0.5, 'center_y': 0.5}
+    # Quadrantes
+    fig.add_annotation(x=0.5, y=0.5, text="IQ", showarrow=False)
+    fig.add_annotation(x=-0.5, y=0.5, text="IIQ", showarrow=False)
+    fig.add_annotation(x=-0.5, y=-0.5, text="IIIQ", showarrow=False)
+    fig.add_annotation(x=0.5, y=-0.5, text="IVQ", showarrow=False)
 
-        # Painel de Botões
-        BoxLayout:
-            size_hint: (1, 0.1)
-            pos_hint: {'y': 0}
-            Button:
-                text: "Iniciar +"
-                on_release: trigo_widget.start_movement(1)
-            Button:
-                text: "Parar/Avançar"
-                on_release: trigo_widget.toggle_movement()
-            Button:
-                text: "Reiniciar"
-                on_release: trigo_widget.reset()
-            Button:
-                text: "Vamos Jogar"
-                on_release: app.root.current = 'game'
+    fig.update_layout(width=600, height=600, showlegend=False, xaxis=dict(visible=False), yaxis=dict(visible=False))
+    return fig
 
-<GameScreen>:
-    name: 'game'
-    BoxLayout:
-        orientation: 'horizontal'
-        
-        # Barra de rolagem grossa à esquerda
-        ScrollView:
-            size_hint_x: 0.2
-            bar_width: 20
-            Label:
-                text: "Progresso e Dicas\\n" * 50
-                size_hint_y: None
-                height: self.texture_size[1]
-        
-        BoxLayout:
-            orientation: 'vertical'
-            padding: 20
-            Label:
-                text: "Ecrã de Gamificação - IA Groq"
-                font_size: '24sp'
-                size_hint_y: 0.1
+# --- LÓGICA DE NAVEGAÇÃO ---
+
+# ECRÃ 1: INTRODUÇÃO
+if st.session_state.pagina == 'intro':
+    st.title("Tutor Trigonométrico")
+    
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.image("https://img.freepik.com/free-vector/cute-robot-waving-hand-cartoon-character_138676-2744.jpg", width=500) # Exemplo de Robô
+    
+    with col2:
+        nome_input = st.text_input("Como te chamas?")
+        if st.button("Entrar"):
+            if nome_input:
+                st.session_state.nome = nome_input
+                st.success(f"É um prazer conhecer-te {nome_input}!")
+                # Aqui o som seria via HTML (Streamlit não suporta áudio direto do servidor para o cliente facilmente)
+                time.sleep(2)
+                mudar_pagina('trigo')
+
+# ECRÃ 2: O CÍRCULO
+elif st.session_state.pagina == 'trigo':
+    # Barra lateral grossa para simular o sensor
+    st.sidebar.markdown("<div style='height: 500px; width: 40px; background: orange;'></div>", unsafe_allow_html=True)
+    
+    st.header(f"Explorador de Ângulos - Olá, {st.session_state.nome}")
+    
+    col_ctrl, col_graph = st.columns([1, 2])
+    
+    with col_ctrl:
+        st.write("### Controlos")
+        if st.button("Iniciar +"):
+            for a in range(0, 361, 5):
+                st.session_state.angulo = float(a)
+                # Simular parada nos notáveis
+                if a in [0, 30, 45, 60, 90, 180]:
+                    time.sleep(0.5)
+                # Infelizmente Streamlit não anima frames fluidos sem st.empty()
+                # Esta é a forma mais estável:
+                st.rerun()
+
+        if st.button("Reiniciar"):
+            st.session_state.angulo = 0.0
+            st.rerun()
             
-            Label:
-                id: score_label
-                text: "Pontuação: 0"
-                size_hint_y: 0.1
-            
-            Label:
-                id: question_text
-                text: "Carregando questão..."
-                text_size: self.width, None
-                size_hint_y: 0.4
-            
-            GridLayout:
-                id: options_grid
-                cols: 2
-                spacing: 10
-                size_hint_y: 0.3
+        st.write(f"**Ângulo Atual:** {st.session_state.angulo}º")
+        st.write(f"**Seno:** {np.sin(np.radians(st.session_state.angulo)):.2f}")
+        st.write(f"**Cosseno:** {np.cos(np.radians(st.session_state.angulo)):.2f}")
 
-            BoxLayout:
-                size_hint_y: 0.1
-                Button:
-                    text: "Voltar ao Círculo"
-                    on_release: app.root.current = 'trigo'
-                Button:
-                    text: "Reiniciar Jogo"
-                    on_release: root.start_game()
+    with col_graph:
+        st.plotly_chart(gerar_circulo(st.session_state.angulo))
 
-<TrigoWidget@Widget>:
-    angle: 0
+    if st.button("Vamos Jogar"):
+        mudar_pagina('jogo')
+
+# ECRÃ 3: GAMIFICAÇÃO
+elif st.session_state.pagina == 'jogo':
+    st.title("Desafio Moçambicano 🇲🇿")
+    st.write(f"Pontuação Acumulada: **{st.session_state.pontos}**")
+    
+    # Exemplo de Questão gerada (Em produção, aqui chama a GROQ)
+    st.info("Pergunta 1: Se um pescador na Beira observa o topo de um farol sob um ângulo de 30º...")
+    
+    opcoes = ["1/2", "√3/2", "1", "√2/2"]
+    escolha = st.radio("Qual é o valor do seno deste ângulo?", opcoes)
+    
+    if st.button("Submeter"):
+        if escolha == "1/2":
+            st.success("Acertaste! Excelente trabalho.")
+            st.session_state.pontos += 10
+        else:
+            st.error("Errado! Presta atenção à resolução abaixo.")
+    
+    if st.button("Voltar ao Início"):
+        mudar_pagina('intro')
