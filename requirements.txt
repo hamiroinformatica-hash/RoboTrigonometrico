@@ -1,7 +1,6 @@
 streamlit
 plotly
-pandas
 numpy
 groq
 gTTS
-pygame
+st-js
