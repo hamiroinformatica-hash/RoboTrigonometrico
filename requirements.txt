@@ -1,8 +1,7 @@
-kivy
-kivymd
-pygame
-gTTS
-SpeechRecognition
-PyAudio
-groq
+streamlit
+plotly
+pandas
 numpy
+groq
+gTTS
+pygame
