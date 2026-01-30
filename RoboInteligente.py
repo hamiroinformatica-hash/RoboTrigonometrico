@@ -1,138 +1,196 @@
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
-from groq import Groq
 import time
+from groq import Groq
+from gtts import gTTS
+import base64
 
-# --- CONFIGURAÇÃO INICIAL ---
+# --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Tutor Trigonométrico", layout="wide")
 
-# Inicialização da API Groq (Substitua pela sua chave)
-try:
+# Inicialização da IA Groq
+if "GROQ_API_KEY" in st.secrets:
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-except:
+else:
     client = None
 
-# Inicializar Estados de Sessão (State Management)
-if 'pagina' not in st.session_state:
-    st.session_state.pagina = 'intro'
-if 'nome' not in st.session_state:
-    st.session_state.nome = ""
-if 'angulo' not in st.session_state:
-    st.session_state.angulo = 0.0
-if 'pontos' not in st.session_state:
-    st.session_state.pontos = 0
+# --- ESTADOS DA SESSÃO ---
+if 'pagina' not in st.session_state: st.session_state.pagina = 'intro'
+if 'angulo' not in st.session_state: st.session_state.angulo = 0
+if 'movendo' not in st.session_state: st.session_state.movendo = False
+if 'pontuacao' not in st.session_state: st.session_state.pontuacao = 0
+if 'questoes_respondidas' not in st.session_state: st.session_state.questoes_respondidas = 0
 
-# --- FUNÇÕES DE SUPORTE ---
-def mudar_pagina(alvo):
-    st.session_state.pagina = alvo
-    st.rerun()
+ANGULOS_NOTAVEIS = [0, 30, 45, 60, 90, 120, 135, 150, 180, 210, 225, 240, 270, 300, 315, 330, 360]
 
-def gerar_circulo(angulo_atual):
-    # Criar o círculo
-    theta = np.linspace(0, 2*np.pi, 100)
-    x_circ = np.cos(theta)
-    y_circ = np.sin(theta)
+# --- FUNÇÕES DE AUDIO ---
+def falar(texto):
+    tts = gTTS(text=texto, lang='pt')
+    tts.save("voce.mp3")
+    with open("voce.mp3", "rb") as f:
+        data = f.read()
+        b64 = base64.b64encode(data).decode()
+        md = f"""<audio autoplay="true"><source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></audio>"""
+        st.markdown(md, unsafe_allow_html=True)
 
+# --- LÓGICA DO GRÁFICO (ECRÃ 2) ---
+def desenhar_circulo(angulo):
+    rad = np.radians(angulo)
+    px, py = np.cos(rad), np.sin(rad)
+    
     fig = go.Figure()
 
-    # Eixos (Cosseno Vermelho, Seno Azul)
-    fig.add_shape(type="line", x0=-1.2, y0=0, x1=1.2, y1=0, line=dict(color="Red", width=2))
-    fig.add_shape(type="line", x0=0, y0=-1.2, x1=0, y1=1.2, line=dict(color="DarkBlue", width=2))
+    # Círculo Trigonométrico (Negrito)
+    t = np.linspace(0, 2*np.pi, 200)
+    fig.add_trace(go.Scatter(x=np.cos(t), y=np.sin(t), mode='lines', line=dict(color='black', width=4)))
 
-    # Círculo
-    fig.add_trace(go.Scatter(x=x_circ, y=y_circ, mode='lines', line=dict(color='black'), name='Círculo'))
+    # Sistema Cartesiano (Cosseno: Vermelho, Seno: Azul Escuro)
+    fig.add_shape(type="line", x0=-1.5, y0=0, x1=1.5, y1=0, line=dict(color="red", width=3))
+    fig.add_shape(type="line", x0=0, y0=-1.5, x1=0, y1=1.5, line=dict(color="darkblue", width=3))
 
-    # Segmento OP (Verde)
-    rad = np.radians(angulo_atual)
-    px, py = np.cos(rad), np.sin(rad)
-    fig.add_trace(go.Scatter(x=[0, px], y=[0, py], mode='lines+markers', line=dict(color='green', width=4), name='Raio (OP)'))
+    # Ângulos Notáveis (Rótulos)
+    for a in ANGULOS_NOTAVEIS:
+        r_a = np.radians(a)
+        fig.add_trace(go.Scatter(x=[np.cos(r_a)], y=[np.sin(r_a)], mode='markers+text', 
+                                 text=[f"<b>{a}º</b>"], textposition="top right",
+                                 marker=dict(color='black', size=8)))
 
-    # Projeções (Segmentos 1 e 2)
-    fig.add_trace(go.Scatter(x=[px, px], y=[0, py], mode='lines', line=dict(color='black', dash='dash'), name='Cos'))
-    fig.add_trace(go.Scatter(x=[0, px], y=[py, py], mode='lines', line=dict(color='darkgreen', dash='dash'), name='Sen'))
+    # Segmentos Móveis
+    # Segmento 3: OP (Verde)
+    fig.add_trace(go.Scatter(x=[0, px], y=[0, py], mode='lines', line=dict(color='green', width=4), name="OP"))
+    # Segmento 1: Paralelo ao Seno (Indica Cosseno - Preto)
+    fig.add_trace(go.Scatter(x=[px, px], y=[0, py], mode='lines', line=dict(color='black', dash='dash'), name="Seg1"))
+    # Segmento 2: Paralelo ao Cosseno (Indica Seno - Verde Escuro)
+    fig.add_trace(go.Scatter(x=[0, px], y=[py, py], mode='lines', line=dict(color='darkgreen', dash='dash'), name="Seg2"))
 
-    # Quadrantes
-    fig.add_annotation(x=0.5, y=0.5, text="IQ", showarrow=False)
-    fig.add_annotation(x=-0.5, y=0.5, text="IIQ", showarrow=False)
-    fig.add_annotation(x=-0.5, y=-0.5, text="IIIQ", showarrow=False)
-    fig.add_annotation(x=0.5, y=-0.5, text="IVQ", showarrow=False)
+    # Robô Vermelho no ponto P
+    fig.add_trace(go.Scatter(x=[px], y=[py], mode='markers', marker=dict(color='red', size=15, symbol='diamond'), name="P"))
 
-    fig.update_layout(width=600, height=600, showlegend=False, xaxis=dict(visible=False), yaxis=dict(visible=False))
+    # Quadrantes e Valores nos Eixos (Negrito)
+    valores = [-1, -0.866, -0.707, -0.5, 0, 0.5, 0.707, 0.866, 1]
+    labels = ["-1", "-√3/2", "-√2/2", "-1/2", "0", "1/2", "√2/2", "√3/2", "1"]
+    
+    fig.update_layout(
+        showlegend=False, width=700, height=700,
+        xaxis=dict(range=[-1.5, 1.5], tickvals=valores, ticktext=[f"<b>{l}</b>" for l in labels]),
+        yaxis=dict(range=[-1.5, 1.5], tickvals=valores, ticktext=[f"<b>{l}</b>" for l in labels]),
+        template="plotly_white",
+        title=f"Ângulo α: {int(angulo)}º | Cos: {px:.2f} | Sen: {py:.2f}"
+    )
     return fig
 
-# --- LÓGICA DE NAVEGAÇÃO ---
+# --- ESTILO DOS ECRÃS ---
+# CSS para o Robô de fundo no Ecrã 2
+BG_ROBO_CSS = """
+<style>
+[data-testid="stAppViewContainer"] {
+    background-color: #d3d3d3; /* Cinza claro */
+    background-image: radial-gradient(circle at 20% 20%, red 10px, transparent 11px), /* Olhos */
+                      radial-gradient(circle at 30% 20%, red 10px, transparent 11px);
+}
+/* Barra lateral grossa (Sensor) */
+[data-testid="stSidebar"] {
+    min-width: 150px;
+    max-width: 150px;
+    border-right: 20px solid #ff8c00; 
+}
+</style>
+"""
+
+# --- NAVEGAÇÃO ---
 
 # ECRÃ 1: INTRODUÇÃO
 if st.session_state.pagina == 'intro':
     st.title("Tutor Trigonométrico")
-    
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        st.image("https://img.freepik.com/free-vector/cute-robot-waving-hand-cartoon-character_138676-2744.jpg", width=500) # Exemplo de Robô
-    
+    col1, col2, col3 = st.columns([0.15, 0.7, 0.15])
     with col2:
-        nome_input = st.text_input("Como te chamas?")
-        if st.button("Entrar"):
-            if nome_input:
-                st.session_state.nome = nome_input
-                st.success(f"É um prazer conhecer-te {nome_input}!")
-                # Aqui o som seria via HTML (Streamlit não suporta áudio direto do servidor para o cliente facilmente)
-                time.sleep(2)
-                mudar_pagina('trigo')
+        # Robô 70% do ecrã
+        st.image("https://img.freepik.com/free-vector/cute-robot-waving-hand-cartoon-character_138676-2744.jpg", use_container_width=True)
+    
+    nome = st.text_input("Escreve o teu nome:", key="nome_user")
+    if st.button("Entrar") or (nome and st.session_state.get('last_nome') != nome):
+        falar(f"É um prazer conhecer-te {nome}, e discutir contigo assuntos da trigonometria")
+        time.sleep(2)
+        st.session_state.pagina = 'trigo'
+        st.rerun()
 
-# ECRÃ 2: O CÍRCULO
+# ECRÃ 2: LABORATÓRIO
 elif st.session_state.pagina == 'trigo':
-    # Barra lateral grossa para simular o sensor
-    st.sidebar.markdown("<div style='height: 500px; width: 40px; background: orange;'></div>", unsafe_allow_html=True)
+    st.markdown(BG_ROBO_CSS, unsafe_allow_html=True)
     
-    st.header(f"Explorador de Ângulos - Olá, {st.session_state.nome}")
+    col_main, col_side = st.columns([3, 1])
     
-    col_ctrl, col_graph = st.columns([1, 2])
-    
-    with col_ctrl:
-        st.write("### Controlos")
-        if st.button("Iniciar +"):
-            for a in range(0, 361, 5):
-                st.session_state.angulo = float(a)
-                # Simular parada nos notáveis
-                if a in [0, 30, 45, 60, 90, 180]:
-                    time.sleep(0.5)
-                # Infelizmente Streamlit não anima frames fluidos sem st.empty()
-                # Esta é a forma mais estável:
-                st.rerun()
-
-        if st.button("Reiniciar"):
-            st.session_state.angulo = 0.0
+    with col_main:
+        placeholder = st.empty()
+        placeholder.plotly_chart(desenhar_circulo(st.session_state.angulo))
+        
+        # Botões de Controle
+        c1, c2, c3, c4, c5 = st.columns(5)
+        if c1.button("Iniciar +"):
+            st.session_state.movendo = True
+        if c2.button("Parar/Avançar"):
+            st.session_state.movendo = not st.session_state.movendo
+        if c3.button("Reiniciar"):
+            st.session_state.angulo = 0
+            st.session_state.movendo = False
             st.rerun()
-            
-        st.write(f"**Ângulo Atual:** {st.session_state.angulo}º")
-        st.write(f"**Seno:** {np.sin(np.radians(st.session_state.angulo)):.2f}")
-        st.write(f"**Cosseno:** {np.cos(np.radians(st.session_state.angulo)):.2f}")
 
-    with col_graph:
-        st.plotly_chart(gerar_circulo(st.session_state.angulo))
+        # Loop de Animação
+        if st.session_state.movendo:
+            while st.session_state.movendo:
+                st.session_state.angulo = (st.session_state.angulo + 1) % 361
+                placeholder.plotly_chart(desenhar_circulo(st.session_state.angulo))
+                
+                if st.session_state.angulo in ANGULOS_NOTAVEIS:
+                    time.sleep(2) # Pausa nos notáveis
+                else:
+                    time.sleep(0.02) # Velocidade 0.02
+                
+                if st.session_state.angulo == 360:
+                    st.session_state.movendo = False
+                    break
 
-    if st.button("Vamos Jogar"):
-        mudar_pagina('jogo')
+    with col_side:
+        if st.button("VAMOS JOGAR"):
+            st.session_state.pagina = 'jogo'
+            st.rerun()
+        if st.button("Página Inicial"):
+            st.session_state.pagina = 'intro'
+            st.rerun()
 
 # ECRÃ 3: GAMIFICAÇÃO
 elif st.session_state.pagina == 'jogo':
-    st.title("Desafio Moçambicano 🇲🇿")
-    st.write(f"Pontuação Acumulada: **{st.session_state.pontos}**")
+    st.title("Ecrã de Gamificação")
+    st.sidebar.write(f"### Pontuação: {st.session_state.pontuacao}")
     
-    # Exemplo de Questão gerada (Em produção, aqui chama a GROQ)
-    st.info("Pergunta 1: Se um pescador na Beira observa o topo de um farol sob um ângulo de 30º...")
-    
-    opcoes = ["1/2", "√3/2", "1", "√2/2"]
-    escolha = st.radio("Qual é o valor do seno deste ângulo?", opcoes)
-    
-    if st.button("Submeter"):
-        if escolha == "1/2":
-            st.success("Acertaste! Excelente trabalho.")
-            st.session_state.pontos += 10
-        else:
-            st.error("Errado! Presta atenção à resolução abaixo.")
-    
-    if st.button("Voltar ao Início"):
-        mudar_pagina('intro')
+    if st.session_state.questoes_respondidas < 20:
+        st.write(f"Questão {st.session_state.questoes_respondidas + 1} de 20")
+        
+        # Simulação de pergunta da IA
+        pergunta = "Qual o valor do Cosseno de 60º?"
+        opcoes = ["1/2", "√3/2", "√2/2", "1"]
+        resposta = st.radio("Escolha a opção correta:", opcoes)
+        
+        if st.button("Confirmar Resposta"):
+            if resposta == "1/2":
+                st.balloons()
+                st.success("Excelente! Estás de parabéns.")
+                st.session_state.pontuacao += 10
+            else:
+                st.error("Incorreto. Acompanha a resolução que a IA apresentará:")
+                st.video("https://www.youtube.com/watch?v=exemplo") # Espaço para imagem/vídeo
+            
+            st.session_state.questoes_respondidas += 1
+            time.sleep(2)
+            st.rerun()
+    else:
+        st.success("🎉 PARABÉNS! Completaste as 20 questões!")
+        if st.button("Reiniciar Quiz"):
+            st.session_state.questoes_respondidas = 0
+            st.session_state.pontuacao = 0
+            st.rerun()
+
+    if st.button("Recuar para o Círculo"):
+        st.session_state.pagina = 'trigo'
+        st.rerun()
